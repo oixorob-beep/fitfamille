@@ -90,8 +90,14 @@
     const items = slotPlan(p, d).map(pl => {
       const lib = FF.Pantry.pool(p, pl.pool || pl.id);
       const picked = log.pick && log.pick[pl.id] ? lib.find(r => r.id === log.pick[pl.id]) : null;
-      const idx = (((dn + SLOT_OFFSET[pl.id] + (log.sw[pl.id] || 0)) % lib.length) + lib.length) % lib.length;
-      return Object.assign({}, pl, { meta: Object.assign({}, SLOTS.find(s => s.id === pl.id), pl.nom ? { nom: pl.nom } : {}, pl.ico ? { ico: pl.ico } : {}), meal: picked || lib[idx], picked: !!picked });
+      /* Menu automatique : on privilégie les recettes les mieux couvertes par le garde-manger.
+         Le jour fait tourner dans le groupe de tête ; « Autre idée » descend ensuite dans le classement. */
+      const rk = FF.Pantry.ranked(p, lib), sw = log.sw[pl.id] || 0;
+      const idx = rk.active
+        ? ((((dn + SLOT_OFFSET[pl.id]) % rk.top) + sw) % lib.length + lib.length) % lib.length
+        : (((dn + SLOT_OFFSET[pl.id] + sw) % lib.length) + lib.length) % lib.length;
+      const frozen = !!(log.fz && log.fz[pl.id]);
+      return Object.assign({}, pl, { meta: Object.assign({}, SLOTS.find(s => s.id === pl.id), pl.nom ? { nom: pl.nom } : {}, pl.ico ? { ico: pl.ico } : {}), meal: picked || rk.list[idx], picked: !!picked && !frozen, auto: rk.active && !picked && sw === 0 });
     });
     const base = items.reduce((a, i) => a + i.meal.kcal, 0);
     const target = C.kcal(p).target;
@@ -271,7 +277,8 @@
   function viewMealsRoot(p) {
     const t = UI.mealTab || 'menu';
     const seg = `<div class="seg" role="group" aria-label="Section repas">${[['menu', '🍽 Menu'], ['pantry', '🥫 Garde-manger'], ['shop', '🛒 Courses']].map(([k, l]) => `<button aria-pressed="${t === k}" data-act="mealTab" data-s="${k}">${l}</button>`).join('')}</div>`;
-    return seg + (t === 'pantry' ? FF.Pantry.viewPantry(p) : t === 'shop' ? FF.Pantry.viewShop(p) : viewMeals(p));
+    const hint = t === 'menu' && FF.Pantry.ensure(p).pantry.length ? '<p class="muted small center">🥫 Menu composé en priorité avec ce qu\'il y a dans ton garde-manger.</p>' : '';
+    return seg + hint + (t === 'pantry' ? FF.Pantry.viewPantry(p) : t === 'shop' ? FF.Pantry.viewShop(p) : viewMeals(p));
   }
   function viewMeals(p) {
     const d = UI.mealDate, isToday = d === today();
@@ -631,8 +638,15 @@
     mealPrev() { UI.mealDate = U.addDays(UI.mealDate, -1); render(); },
     mealNext() { UI.mealDate = U.addDays(UI.mealDate, 1); render(); },
     mealToday() { UI.mealDate = today(); render(); },
-    mealToggle(d) { const l = mealLog(P(), UI.mealDate, true); l.eaten[d.slot] = !l.eaten[d.slot]; saveOrWarn(); render(); },
-    mealSwap(d) { const l = mealLog(P(), UI.mealDate, true); l.sw[d.slot] = (l.sw[d.slot] || 0) + 1; delete l.custom[d.slot]; if (l.pick) delete l.pick[d.slot]; saveOrWarn(); render(); },
+    mealToggle(d) {
+      const l = mealLog(P(), UI.mealDate, true);
+      if (!l.eaten[d.slot] && !l.custom[d.slot] && !(l.pick && l.pick[d.slot])) {   // repas mangé : on fige la recette, même si le garde-manger change ensuite
+        const it = menuFor(P(), UI.mealDate).items.find(i => i.id === d.slot);
+        if (it && it.meal.id) { l.pick = l.pick || {}; l.pick[d.slot] = it.meal.id; l.fz = l.fz || {}; l.fz[d.slot] = true; }
+      }
+      l.eaten[d.slot] = !l.eaten[d.slot]; saveOrWarn(); render();
+    },
+    mealSwap(d) { const l = mealLog(P(), UI.mealDate, true); l.sw[d.slot] = (l.sw[d.slot] || 0) + 1; delete l.custom[d.slot]; if (l.pick) delete l.pick[d.slot]; if (l.fz) delete l.fz[d.slot]; saveOrWarn(); render(); },
     mealCustomClear(d) { const l = mealLog(P(), UI.mealDate, true); delete l.custom[d.slot]; saveOrWarn(); render(); },
     mealCustom(d) {
       const s = SLOTS.find(x => x.id === d.slot);

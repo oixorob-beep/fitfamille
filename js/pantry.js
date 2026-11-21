@@ -52,6 +52,18 @@ FF.Pantry = (() => {
     const n = have.length + miss.length;
     return { have, miss, pct: n ? have.length / n : 0 };
   }
+  /* Classe les recettes d'un repas selon ce qu'on a déjà : plus la recette est couverte par le garde-manger, plus elle est haut.
+     `top` = taille du groupe de tête (recettes presque aussi bien couvertes que la meilleure), au moins 3, pour garder de la variété. */
+  function ranked(p, lib) {
+    ensure(p);
+    if (!p.pantry.length) return { list: lib, top: lib.length, active: false };
+    const sc = lib.map((r, ix) => { const c = cover(p, r); return { r, ix, pct: c.pct, have: c.have.length }; });
+    sc.sort((a, b) => (b.pct - a.pct) || (b.have - a.have) || (a.ix - b.ix));
+    const best = sc[0].pct;
+    let top = sc.filter(x => x.pct >= best - 0.2).length;
+    top = Math.min(sc.length, Math.max(3, top));
+    return { list: sc.map(x => x.r), top, active: best > 0 };
+  }
   function badge(p, r) {
     ensure(p);
     if (!p.pantry.length || !r.ing || !r.ing.length) return '';
@@ -109,6 +121,7 @@ FF.Pantry = (() => {
       ml.pick = ml.pick || {};
       A.slotPlan(p, d).forEach(pl => {
         if (ml.eaten[pl.id] || ml.custom[pl.id]) return;
+        if (ml.fz) delete ml.fz[pl.id];
         const cands = pool(p, pl.pool || pl.id);
         let best = null, bs = -1e9;
         const pickFrom = cands.filter(r => (count[r.id] || 0) < 2);          // pas plus de 2 fois la même recette
@@ -306,7 +319,7 @@ FF.Pantry = (() => {
     ACT.slotRecipes = d => sheetSlotRecipes(d.slot);
     ACT.recipeUse = d => {
       const p = ensure(ctx.P()), ml = ctx.mealLog(p, ctx.UI.mealDate, true);
-      ml.pick = ml.pick || {}; ml.pick[d.slot] = d.id; delete ml.custom[d.slot];
+      ml.pick = ml.pick || {}; ml.pick[d.slot] = d.id; delete ml.custom[d.slot]; if (ml.fz) delete ml.fz[d.slot];
       save(); ctx.closeSheet(); ctx.UI.mealTab = 'menu'; ctx.render(); ctx.toast('Repas choisi');
     };
     ACT.recipeNew = sheetRecipeNew;
@@ -373,5 +386,5 @@ FF.Pantry = (() => {
   /* appelé après chaque rendu */
   const after = () => { if (A && A.UI.tab === 'meals' && A.UI.mealTab === 'pantry') renderResults(); };
 
-  return { install, after, pool, badge, viewPantry, viewShop, ensure };
+  return { install, after, pool, ranked, badge, viewPantry, viewShop, ensure };
 })();
